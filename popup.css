@@ -1,0 +1,9 @@
+body { margin: 0; width: 320px; background: #f7f9fc; color: #172033; font: 14px/1.5 system-ui, "Microsoft YaHei", sans-serif; }
+main { padding: 18px; }
+h1 { margin: 0 0 10px; font-size: 18px; }
+p { margin: 0 0 15px; color: #475569; }
+button { width: 100%; border: 0; border-radius: 8px; background: #1765d1; color: #fff; padding: 11px; font: inherit; font-weight: 600; cursor: pointer; }
+button:disabled { opacity: .6; cursor: wait; }
+#status { min-height: 42px; margin-top: 12px; font-weight: 500; }
+#status.error { color: #b42318; }
+small { display: block; color: #64748b; }
