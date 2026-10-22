@@ -1,16 +1,17 @@
 const encoder = new TextEncoder();
 const xmlEscape = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[c]);
 
-export function parseCouponResponse(responseText, couponId) {
-  const payload = JSON.parse(responseText);
+export function parseCouponResponse(responseText, couponId, { allowMissingProducts = false } = {}) {
+  // Quote long integer tokens before JSON.parse; never change digits inside strings.
+  const payload = JSON.parse(responseText.replace(/"(?:\\.|[^"\\])*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g,
+    token => /^-?\d{16,}$/.test(token) ? `"${token}"` : token));
   if (payload.code !== 0 || !payload.data) throw new Error('后台没有返回有效的优惠券数据。');
   const data = payload.data;
   if (String(data.coupon_meta_id) !== String(couponId)) throw new Error('优惠券 ID 与页面不一致。');
-  const detail = data.type_detail;
-  if (typeof detail !== 'string') throw new Error('该优惠券没有指定商品明细。');
+  const detail = typeof data.type_detail === 'string' ? data.type_detail : JSON.stringify(data.type_detail ?? null);
   // 19 位商品 ID 超过 JavaScript 安全整数范围，直接从原始文本提取。
   const ids = [...detail.matchAll(/"product_id"\s*:\s*"?(\d+)"?/g)].map(match => match[1]);
-  if (!ids.length) throw new Error('该优惠券没有可导出的指定商品 ID。');
+  if (!ids.length && !allowMissingProducts) throw new Error('该优惠券没有可导出的指定商品 ID。');
   if (ids.some(id => !/^\d{16,20}$/.test(id))) throw new Error('商品 ID 格式异常。');
   return { id: String(couponId), name: String(data.coupon_name || ''), ids: [...new Set(ids)] };
 }
