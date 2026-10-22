@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import vm from 'node:vm';
-import { parseCouponResponse, buildXlsx } from './core.mjs';
-import { collectCouponProducts, readSelectedCount } from './page-reader.mjs';
+import { parseCouponResponse, buildXlsx, readSelectedCount } from './core.mjs';
+import { collectCouponScope } from './scope-reader.mjs';
 
 const source = (await fs.readFile(new URL('./popup.js', import.meta.url), 'utf8')).replace(/^import .*;\r?\n/gm, '');
 const couponId = '9999999999999999999';
@@ -30,14 +30,14 @@ async function exportFixture({ apiCount = 500, total = 1001, collected = allIds,
           } }),
           pageText: `已选数量 ${total} 个`
         } }];
-        assert.equal(func, collectCouponProducts);
+        assert.equal(func, collectCouponScope);
         if (collectionError) throw new Error(collectionError);
-        return [{ result: { ids: collected, total } }];
+        return [{ result: { ids: collected, total, received: collected.length } }];
       }
     }
   };
   vm.runInNewContext(source, {
-    parseCouponResponse, buildXlsx, collectCouponProducts, readSelectedCount, chrome,
+    parseCouponResponse, buildXlsx, collectCouponScope, readSelectedCount, chrome,
     URL: TestURL, Blob, setTimeout() {},
     document: {
       getElementById: id => id === 'export' ? button : status,
@@ -52,7 +52,7 @@ async function exportFixture({ apiCount = 500, total = 1001, collected = allIds,
 const partial = await exportFixture();
 assert.equal(partial.requests, 2);
 assert.equal(partial.downloads, 1);
-assert.match(partial.status, /1001.*一致/);
+assert.match(partial.status, /完整.*1001/);
 const zipText = new TextDecoder().decode(await partial.blob.arrayBuffer());
 assert.ok(zipText.includes(allIds.at(-1)));
 const fast = await exportFixture({ apiCount: 1001 });

@@ -1,6 +1,13 @@
 const encoder = new TextEncoder();
 const xmlEscape = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[c]);
 
+export function readSelectedCount(text) {
+  const counts = [...String(text).matchAll(/已选数量\s*[:：]?\s*([\d,，]+)\s*个?/g)]
+    .map(match => Number(match[1].replace(/[,，]/g, '')));
+  const unique = [...new Set(counts)];
+  return unique.length === 1 && Number.isSafeInteger(unique[0]) && unique[0] > 0 ? unique[0] : null;
+}
+
 export function parseCouponResponse(responseText, couponId, { allowMissingProducts = false } = {}) {
   // Quote long integer tokens before JSON.parse; never change digits inside strings.
   const payload = JSON.parse(responseText.replace(/"(?:\\.|[^"\\])*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g,

@@ -1,5 +1,5 @@
-import { parseCouponResponse, buildXlsx } from './core.mjs';
-import { collectCouponProducts, readSelectedCount } from './page-reader.mjs';
+import { parseCouponResponse, buildXlsx, readSelectedCount } from './core.mjs';
+import { collectCouponScope } from './scope-reader.mjs';
 
 const button = document.getElementById('export');
 const status = document.getElementById('status');
@@ -37,17 +37,18 @@ button.addEventListener('click', async () => {
     const coupon = parseCouponResponse(responseText, couponId, { allowMissingProducts: true });
     const total = readSelectedCount(pageText);
     if (total === null || coupon.ids.length !== total) {
-      setStatus(`详情返回 ${coupon.ids.length} 个商品，正在逐页核对完整列表，请保持弹窗打开…`);
+      setStatus(`详情返回 ${coupon.ids.length} 个商品，正在分批读取完整列表，请保持弹窗打开…`);
       const [result] = await chrome.scripting.executeScript({
         target: { tabId },
-        args: [couponId],
-        func: collectCouponProducts
+        world: 'MAIN',
+        args: [couponId, total],
+        func: collectCouponScope
       });
       const collected = result?.result;
       if (!collected || !Array.isArray(collected.ids) ||
-          collected.ids.length !== collected.total || collected.total < 1 ||
+          collected.received !== collected.total || collected.total < 1 || !collected.ids.length ||
           collected.ids.some(id => typeof id !== 'string' || !/^\d{16,20}$/.test(id)) ||
-          new Set(collected.ids).size !== collected.total ||
+          new Set(collected.ids).size !== collected.ids.length ||
           (total !== null && collected.total !== total) ||
           coupon.ids.some(id => !collected.ids.includes(id))) {
         throw new Error('完整商品列表核对失败，未生成不完整文件。请刷新页面后重试。');
@@ -72,7 +73,7 @@ button.addEventListener('click', async () => {
     link.click();
     link.remove();
     setTimeout(() => URL.revokeObjectURL(downloadUrl), 30000);
-    setStatus(`已导出 ${coupon.ids.length} 个商品 ID，数量与页面已选数量一致。`);
+    setStatus(`已完整读取并导出 ${coupon.ids.length} 个去重商品 ID。`);
   } catch (error) {
     setStatus(error?.message || '导出失败，请刷新优惠券页面后重试。', true);
   } finally {
