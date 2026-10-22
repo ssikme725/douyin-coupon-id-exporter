@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "抖店优惠券商品 ID 导出",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "在已登录的抖店优惠券详情页，一键导出指定商品 ID 为 Excel。",
   "permissions": ["activeTab", "scripting"],
   "action": {

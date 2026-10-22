@@ -1,4 +1,5 @@
-import { parseCouponResponse, buildXlsx } from './core.mjs';
+import { parseCouponResponse, buildXlsx, readSelectedCount } from './core.mjs';
+import { collectCouponScope } from './scope-reader.mjs';
 
 const button = document.getElementById('export');
 const status = document.getElementById('status');
@@ -21,19 +22,47 @@ async function readCouponFromCurrentPage() {
     func: async id => {
       const response = await fetch(`/marketing/coupons/v1/shopcoupons/${id}`, { credentials: 'include' });
       if (!response.ok) throw new Error(`后台请求失败（${response.status}）`);
-      return await response.text();
+      return { responseText: await response.text(), pageText: document.body.innerText };
     }
   });
-  if (typeof injection?.result !== 'string') throw new Error('未能读取优惠券数据，请确认已登录并刷新页面。');
-  return { couponId, responseText: injection.result };
+  if (typeof injection?.result?.responseText !== 'string') throw new Error('未能读取优惠券数据，请确认已登录并刷新页面。');
+  return { couponId, tabId: tab.id, ...injection.result };
 }
 
 button.addEventListener('click', async () => {
   button.disabled = true;
   setStatus('正在读取优惠券商品…');
   try {
-    const { couponId, responseText } = await readCouponFromCurrentPage();
-    const coupon = parseCouponResponse(responseText, couponId);
+    const { couponId, tabId, responseText, pageText } = await readCouponFromCurrentPage();
+    const coupon = parseCouponResponse(responseText, couponId, { allowMissingProducts: true });
+    const total = readSelectedCount(pageText);
+    if (total === null || coupon.ids.length !== total) {
+      setStatus(`详情返回 ${coupon.ids.length} 个商品，正在分批读取完整列表，请保持弹窗打开…`);
+      const [result] = await chrome.scripting.executeScript({
+        target: { tabId },
+        world: 'MAIN',
+        args: [couponId, total],
+        func: collectCouponScope
+      });
+      const collected = result?.result;
+      if (!collected || !Array.isArray(collected.ids) ||
+          collected.received !== collected.total || collected.total < 1 || !collected.ids.length ||
+          collected.ids.some(id => typeof id !== 'string' || !/^\d{16,20}$/.test(id)) ||
+          new Set(collected.ids).size !== collected.ids.length ||
+          (total !== null && collected.total !== total) ||
+          coupon.ids.some(id => !collected.ids.includes(id))) {
+        throw new Error('完整商品列表核对失败，未生成不完整文件。请刷新页面后重试。');
+      }
+      coupon.ids = collected.ids;
+    }
+    // Do not download a result after the tab navigated to another coupon/login page.
+    const currentTab = await chrome.tabs.get(tabId);
+    const currentUrl = new URL(currentTab.url || 'about:blank');
+    if (currentUrl.hostname !== 'fxg.jinritemai.com' ||
+        !currentUrl.pathname.includes('/marketing/coupon/detail') ||
+        currentUrl.searchParams.get('id') !== couponId) {
+      throw new Error('优惠券页面已切换，请在原优惠券页面重新导出。');
+    }
     const bytes = buildXlsx(coupon);
     const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const downloadUrl = URL.createObjectURL(blob);
@@ -44,7 +73,7 @@ button.addEventListener('click', async () => {
     link.click();
     link.remove();
     setTimeout(() => URL.revokeObjectURL(downloadUrl), 30000);
-    setStatus(`已导出 ${coupon.ids.length} 个商品 ID（去重后 ${new Set(coupon.ids).size} 个）。`);
+    setStatus(`已完整读取并导出 ${coupon.ids.length} 个去重商品 ID。`);
   } catch (error) {
     setStatus(error?.message || '导出失败，请刷新优惠券页面后重试。', true);
   } finally {
