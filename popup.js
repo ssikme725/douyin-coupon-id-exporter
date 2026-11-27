@@ -41,17 +41,24 @@ button.addEventListener('click', async () => {
       const [result] = await chrome.scripting.executeScript({
         target: { tabId },
         world: 'MAIN',
-        args: [couponId, total],
+        args: [couponId, total, coupon.ids, true],
         func: collectCouponScope
       });
       const collected = result?.result;
+      if (collected?.error) throw new Error(collected.error);
+      if (!collected) throw new Error('浏览器未返回商品分页结果，请刷新优惠券页面后重试。');
       if (!collected || !Array.isArray(collected.ids) ||
-          collected.received !== collected.total || collected.total < 1 || !collected.ids.length ||
+          !Number.isSafeInteger(collected.total) || collected.total < 1 || !collected.ids.length ||
+          !Number.isSafeInteger(collected.received) || collected.received < 0 ||
+          !Number.isSafeInteger(collected.recoveredFromDetail) || collected.recoveredFromDetail < 0 ||
+          collected.received + collected.recoveredFromDetail !== collected.total ||
+          collected.verifiedRecords !== collected.total || collected.ids.length > collected.total ||
+          (collected.recoveredFromDetail > 0 && collected.ids.length !== collected.total) ||
           collected.ids.some(id => typeof id !== 'string' || !/^\d{16,20}$/.test(id)) ||
           new Set(collected.ids).size !== collected.ids.length ||
           (total !== null && collected.total !== total) ||
           coupon.ids.some(id => !collected.ids.includes(id))) {
-        throw new Error('完整商品列表核对失败，未生成不完整文件。请刷新页面后重试。');
+        throw new Error(`完整商品列表核对失败（页面 ${total ?? '未知'}，分页 ${collected.received ?? '未知'}，补回 ${collected.recoveredFromDetail ?? '未知'}，总数 ${collected.total ?? '未知'}），未生成不完整文件。`);
       }
       coupon.ids = collected.ids;
     }
