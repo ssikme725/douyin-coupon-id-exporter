@@ -8,7 +8,7 @@ const source = (await fs.readFile(new URL('./popup.js', import.meta.url), 'utf8'
 const couponId = '9999999999999999999';
 const allIds = Array.from({ length: 1001 }, (_, i) => String(8000000000000000000n + BigInt(i)));
 async function exportFixture({ apiCount = 500, total = 1001, collected = allIds,
-  collectionError, switched = false } = {}) {
+  collectionError, switched = false, recovered = 0, serializedError, emptyResult = false } = {}) {
   let onClick, blob, downloads = 0, requests = 0;
   const button = { addEventListener(_, callback) { onClick = callback; } };
   const status = { textContent: '', classList: { toggle() {} } };
@@ -22,7 +22,7 @@ async function exportFixture({ apiCount = 500, total = 1001, collected = allIds,
       get: async () => ({ url: switched ? 'https://fxg.jinritemai.com/login/common' : url })
     },
     scripting: {
-      executeScript: async ({ func }) => {
+      executeScript: async ({ func, args }) => {
         requests++;
         if (requests === 1) return [{ result: {
           responseText: JSON.stringify({ code: 0, data: {
@@ -31,8 +31,13 @@ async function exportFixture({ apiCount = 500, total = 1001, collected = allIds,
           pageText: `已选数量 ${total} 个`
         } }];
         assert.equal(func, collectCouponScope);
+        assert.equal(args[3], true);
+        assert.equal(args[2].length, apiCount);
         if (collectionError) throw new Error(collectionError);
-        return [{ result: { ids: collected, total, received: collected.length } }];
+        if (serializedError) return [{ result: { error: serializedError } }];
+        if (emptyResult) return [{ result: undefined }];
+        return [{ result: { ids: collected, total, received: collected.length - recovered,
+          recoveredFromDetail: recovered, verifiedRecords: collected.length } }];
       }
     }
   };
@@ -60,6 +65,14 @@ assert.equal(fast.requests, 1);
 assert.equal(fast.downloads, 1);
 const empty = await exportFixture({ apiCount: 0 });
 assert.equal(empty.downloads, 1);
+const recovered = await exportFixture({ recovered: 1 });
+assert.equal(recovered.downloads, 1);
+const serialized = await exportFixture({ serializedError: '分页第18页读取失败' });
+assert.equal(serialized.downloads, 0);
+assert.equal(serialized.status, '分页第18页读取失败');
+const missingResult = await exportFixture({ emptyResult: true });
+assert.equal(missingResult.downloads, 0);
+assert.match(missingResult.status, /浏览器未返回/);
 for (const args of [
   { collected: allIds.slice(0, 500) },
   { collected: [...allIds.slice(0, -1), allIds[0]] },

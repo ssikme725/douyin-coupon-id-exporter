@@ -1,9 +1,11 @@
 // This is the read-only pagination endpoint used by the coupon detail page itself.
 // Self-contained because chrome.scripting serializes the function into MAIN world.
-export async function collectCouponScope(couponId, expectedTotal) {
+export async function collectCouponScope(couponId, expectedTotal, detailIds = [], returnErrors = false) {
+  try {
   const size = 20;
   const ids = new Set(), rowKeys = new Set();
-  let total = null, received = 0;
+  let total = null, received = 0, firstPageSignature;
+  const rowKey = item => JSON.stringify([item.product_id, item.channel_type ?? 0, String(item.channel_id ?? 0)]);
   const assertPage = () => {
     const url = new URL(location.href);
     if (url.hostname !== 'fxg.jinritemai.com' ||
@@ -39,26 +41,49 @@ export async function collectCouponScope(couponId, expectedTotal) {
     if (data.total !== total || (expectedTotal !== null && total !== expectedTotal)) {
       throw new Error('商品总数与页面不一致或在导出期间变化，请刷新后重试。');
     }
-    const expectedSize = Math.min(size, total - received);
-    if (data.goods.length !== expectedSize) throw new Error('商品分页缺失或被截断，未生成不完整文件。');
+    // The API can omit an unavailable product within a page while its total still
+    // counts that product. Page offsets must not depend on the returned row count.
+    const expectedSize = Math.min(size, total - (page - 1) * size);
+    if (data.goods.length > expectedSize) throw new Error('商品分页条数超过预期，未生成不完整文件。');
+    if (page === 1) firstPageSignature = JSON.stringify(data.goods.map(rowKey));
     for (const item of data.goods) {
       const id = item.product_id;
       if (typeof id !== 'string' || !/^\d{16,20}$/.test(id)) throw new Error('商品 ID 格式异常。');
-      const key = JSON.stringify([id, item.channel_type ?? 0, String(item.channel_id ?? 0)]);
+      const key = rowKey(item);
       if (rowKeys.has(key)) throw new Error('商品分页返回了重复记录，未生成不完整文件。');
       rowKeys.add(key);
       ids.add(id);
     }
     received += data.goods.length;
-    if (received === total) {
+    if (page === Math.ceil(total / size)) {
       // Re-read the first page to detect common mid-export list changes.
       const first = await readPage(1);
-      if (first.total !== total || first.goods.length !== Math.min(size, total) ||
-          first.goods.some(item => !rowKeys.has(JSON.stringify([
-            item.product_id, item.channel_type ?? 0, String(item.channel_id ?? 0)
-          ])))) throw new Error('商品列表在导出期间变化，请重新导出。');
-      return { ids: [...ids], total, received };
+      if (first.total !== total || JSON.stringify(first.goods.map(rowKey)) !== firstPageSignature) {
+        throw new Error('商品列表在导出期间变化，请重新导出。');
+      }
+      if (!Array.isArray(detailIds) || detailIds.some(id => typeof id !== 'string' || !/^\d{16,20}$/.test(id))) {
+        throw new Error('详情商品 ID 格式异常。');
+      }
+      const missing = [...new Set(detailIds)].filter(id => !ids.has(id));
+      const shortage = total - received;
+      // Only recover a short response if all rows represent distinct products and
+      // the independent detail list fills precisely the shortfall, with no extras.
+      if (shortage > 0) {
+        if (ids.size !== received || missing.length !== shortage) {
+          throw new Error(`商品数量核对失败：分页 ${received}/${total} 条，详情可补回 ${missing.length} 个，未生成不完整文件。`);
+        }
+        missing.forEach(id => ids.add(id));
+      } else if (missing.length) {
+        throw new Error(`详情与完整分页存在 ${missing.length} 个商品差异，请刷新后重试。`);
+      }
+      return { ids: [...ids], total, received, recoveredFromDetail: shortage, verifiedRecords: received + shortage };
     }
     await new Promise(resolve => setTimeout(resolve, 80));
+  }
+  } catch (error) {
+    // Some Chromium versions expose rejected injected promises as result: undefined.
+    // Return an explicit serializable error for the popup instead.
+    if (returnErrors) return { error: error?.message || String(error || '商品分页读取失败。') };
+    throw error;
   }
 }
